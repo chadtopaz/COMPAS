@@ -1,19 +1,75 @@
 # Load Libraries
 library(tidyverse)
 library(lubridate)
+library(RSQLite)
 library(pbmcapply)
 
-# Read files
-data1 <- read.csv("BrowardScapped2006.csv")
-data2 <- read.csv("BrowardScapped2007.csv")
+# Read files from data scraping
+data1 <- read.csv("BrowardScapped2006.csv") %>%
+  mutate(Date = as.Date(Date,"%m/%d/%Y"))
+data2 <- read.csv("BrowardScapped2007.csv") %>%
+  mutate(Date = as.Date(Date,"%m/%d/%Y"))
 data2 <- data2[-1,]
-data3 <- read.csv("BrowardScappedProPublica.csv")
+data3 <- read.csv("BrowardScappedProPublica.csv") %>%
+  mutate(Date = as.Date(Date,"%m/%d/%Y")) %>%
+  filter(year(Date) %in% c(2013, 2014)) %>%
+  mutate(filedate = as.Date(Date,Date.Filed.of.First.Charge,"%m/%d/%Y")) %>%
+  dplyr::select(-Date.Filed.of.First.Charge)
 data3 <- data3[-1,]
-data3 <- data3 %>%
-  mutate(Date2 = as.Date(Date,"%m/%d/%Y")) %>%
-  filter(year(Date2) %in% c(2013, 2014)) %>%
-  select(-Date2)
-data <- rbind(data1,data2,data3)
+
+# Deal with compas scores
+# take case number and date from data3
+# go to case arrest and get person id
+# go to compas and take scores that are
+# before and most proximate to case date
+con <- dbConnect(SQLite(), 'compas.db')
+# dbListTables(con)
+casearrest <- dbGetQuery(con, "SELECT * FROM casearrest") %>%
+  dplyr::select(name, case_number, person_id) %>%
+  unique
+compas <- dbGetQuery(con, "SELECT * FROM compas") %>%
+  mutate(screening_date = as.Date(screening_date))
+# i <- 188
+getScores <- function(i) {
+  casenumber <- data3[i,]$Case.Number
+  filedate <- data3[i,]$filedate
+  personID <- casearrest %>%
+    filter(case_number == casenumber) %>%
+    pull(person_id) %>%
+    unique
+  personID <- ifelse(length(personID) == 1, personID, NA)
+  if(is.na(personID)){
+    return(data.frame(violence = NA, recidivism = NA, failuretoappear = NA))
+  }
+  compasdata <- compas %>%
+    filter(person_id == personID) %>%
+    mutate(timediff = abs(as.numeric(screening_date - filedate))) %>%
+    filter(timediff == min(timediff)) %>%
+    dplyr::select(-id, -scale_set, -compas_assessment_id) %>%
+    unique()
+  if(nrow(compasdata) != 3){
+    return(data.frame(violence = NA, recidivism = NA, failuretoappear = NA))
+  }
+  scores <- compasdata %>%
+    dplyr::select(type_of_assessment, score_text) %>%
+    mutate(type_of_assessment = str_replace_all(type_of_assessment, "Risk of", "")) %>%
+    mutate(type_of_assessment = str_replace_all(type_of_assessment, " ", "")) %>%
+    mutate(type_of_assessment = tolower(type_of_assessment)) %>%
+    mutate(score_text = tolower(score_text)) %>%
+    pivot_wider(names_from = "type_of_assessment", values_from = "score_text")
+  return(scores)
+}
+scores <- pbmclapply(1:nrow(data3), getScores, mc.cores = 35) %>%
+  bind_rows
+data3 <- cbind(data3, scores)
+
+# Combine data
+data12 <- bind_rows(data1, data2) %>%
+  mutate(violence = "none", recidivism = "none", failuretoappear = "none")
+data <- bind_rows(data12, data3) %>%
+  mutate(violence = factor(violence, levels = c("none","low","medium","high"))) %>%
+  mutate(recidivism = factor(recidivism, levels = c("none","low","medium","high"))) %>%
+  mutate(failuretoappear = factor(failuretoappear, levels = c("none","low","medium","high")))
 
 # Clean data
 data <- data %>%
@@ -65,7 +121,7 @@ data <- data %>%
   mutate(inches = replace(inches, is.na(inches), 0)) %>%
   mutate(inches = as.numeric(inches)) %>%
   mutate(Height = 12*feet + inches) %>%
-  select(-feet,-inches)
+  dplyr::select(-feet,-inches)
 
 data <- data %>%
   mutate(Eye = as.factor(Eye))
@@ -121,7 +177,7 @@ data <- data %>%
   mutate(across(c("years","months","days"), as.numeric)) %>%
   mutate(across(c("years","months","days"), replace_na, replace = 0)) %>%
   mutate(Confinement = 12*years + months + (days/30)) %>%
-  select(-years,-months, -days)
+  dplyr::select(-years,-months, -days)
 
 data <- data %>%
   mutate(Fine = replace(Fine, Fine == "", 0)) %>%
@@ -137,7 +193,7 @@ data <- data %>%
   mutate(across(c("years","months","days"), as.numeric)) %>%
   mutate(across(c("years","months","days"), replace_na, replace = 0)) %>%
   mutate(State.Probation = 12*years + months + (days/30)) %>%
-  select(-years,-months, -days)
+  dplyr::select(-years,-months, -days)
 
 data <- data %>%
   mutate(Disposition = replace(Disposition, Disposition == "", NA)) %>%
