@@ -65,10 +65,16 @@ tmp2 <- data %>%
   mutate(prop = count/total) %>%
   rename(score = recidivism) %>%
   mutate(whichscore = "recidivism") 
-scoresbyrace <- bind_rows(tmp1, tmp2)
+scoresbyrace <- bind_rows(tmp1, tmp2) %>%
+  mutate(score = factor(score, levels = c("high", "medium", "low")))
+facetlabels <- c("Recidivism","Violence")
+names(facetlabels) <- c("recidivism","violence")
 scoresbyrace %>%
-  ggplot(aes(x = whichscore, y = prop, group = Race, fill = score)) +
-  geom_bar(stat = "identity", position = "dodge")
+  ggplot(aes(x = Race, y = prop, fill = score)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ whichscore, labeller = labeller(whichscore = facetlabels)) +
+  scale_fill_discrete(breaks = c("low", "medium", "high"), labels = c("Low", "Medium", "High"), name = "Score") +
+  ylab("Proportion")
 
 # Analysis 1:
 # Association between decision to imprison
