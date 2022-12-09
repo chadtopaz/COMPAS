@@ -43,6 +43,33 @@ data <- data %>%
   na.omit %>%
   droplevels
 
+# Exploration
+# Look at distribution of COMPAS scores by race
+tmp1 <- data %>%
+  filter(violence != "none") %>%
+  group_by(Race, violence) %>%
+  summarise(count = n()) %>%
+  ungroup %>%
+  group_by(Race) %>%
+  mutate(total = sum(count)) %>%
+  mutate(prop = count/total) %>%
+  rename(score = violence) %>%
+  mutate(whichscore = "violence") 
+tmp2 <- data %>%
+  filter(recidivism != "none") %>%
+  group_by(Race, recidivism) %>%
+  summarise(count = n()) %>%
+  ungroup %>%
+  group_by(Race) %>%
+  mutate(total = sum(count)) %>%
+  mutate(prop = count/total) %>%
+  rename(score = recidivism) %>%
+  mutate(whichscore = "recidivism") 
+scoresbyrace <- bind_rows(tmp1, tmp2)
+scoresbyrace %>%
+  ggplot(aes(x = whichscore, y = prop, group = Race, fill = score)) +
+  geom_bar(stat = "identity", position = "dodge")
+
 # Analysis 1:
 # Association between decision to imprison
 # and existence of COMPAS score
@@ -70,7 +97,7 @@ lmdata2 <- data %>%
                 Plea.s., violence, recidivism, age,
                 starts_with("charge"), prison) %>%
   droplevels
-M2 <- glm(prison ~ . + violence:Race + recidivism:Race, data = lmdata2, family = "binomial")
+M2 <- glm(prison ~ . - recidivism + violence:Race, data = lmdata2, family = "binomial")
 
 # Look at results
 tidy(M2) %>% 
