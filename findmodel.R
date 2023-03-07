@@ -5,6 +5,8 @@ library(broom)
 library(CovSel)
 library(bnlearn)
 library(ggm)
+library(dagitty)
+library(lavaan)
 
 # Read data
 load("cleancompas.Rdata")
@@ -83,63 +85,57 @@ plot(dag)
 arcs(dag)
 
 
-# Test some in/dependencies
-testImplications <- function( covariance.matrix, sample.size ){
-  
-  tst <- function(i){ pcor.test( pcor(i,covariance.matrix), length(i)-2, sample.size )$pvalue }
-  tos <- function(i){ paste(i,collapse=" ") }
-  implications <- list(c("Court.Type","Gender"),
-                       c("Court.Type","Number.of.Charges","Race"),
-                       c("Court.Type","Plea.s.","Judge.Name"),
-                       c("Court.Type","age"),
-                       c("Court.Type","recidivism"),
-                       c("Court.Type","violence"),
-                       c("Gender","Judge.Name"),
-                       c("Gender","Plea.s."),
-                       c("Gender","Public.Defender."),
-                       c("Gender","Race"),
-                       c("Gender","age"),
-                       c("Gender","prison"),
-                       c("Gender","recidivism"),
-                       c("Gender","violence"),
-                       c("Judge.Name","Number.of.Charges","Race"),
-                       c("Judge.Name","Number.of.Charges","Court.Type"),
-                       c("Judge.Name","Public.Defender.","Court.Type"),
-                       c("Judge.Name","Race","Court.Type"),
-                       c("Judge.Name","age"),
-                       c("Judge.Name","prison","Court.Type"),
-                       c("Judge.Name","recidivism"),
-                       c("Judge.Name","violence"),
-                       c("Number.of.Charges","Plea.s.","Judge.Name"),
-                       c("Number.of.Charges","Plea.s.","Court.Type"),
-                       c("Number.of.Charges","Plea.s.","Race"),
-                       c("Number.of.Charges","Public.Defender.","Race"),
-                       c("Number.of.Charges","age"),
-                       c("Number.of.Charges","prison","Public.Defender.","Court.Type"),
-                       c("Number.of.Charges","prison","Race"),
-                       c("Number.of.Charges","recidivism"),
-                       c("Number.of.Charges","violence"),
-                       c("Plea.s.","Public.Defender.","Court.Type"),
-                       c("Plea.s.","Public.Defender.","Judge.Name"),
-                       c("Plea.s.","Race","Court.Type"),
-                       c("Plea.s.","Race","Judge.Name"),
-                       c("Plea.s.","age"),
-                       c("Plea.s.","prison","Court.Type"),
-                       c("Plea.s.","prison","Judge.Name"),
-                       c("Plea.s.","recidivism"),
-                       c("Plea.s.","violence"),
-                       c("Public.Defender.","age"),
-                       c("Public.Defender.","recidivism"),
-                       c("Public.Defender.","violence"),
-                       c("Race","age"),
-                       c("Race","prison","Public.Defender.","Court.Type"),
-                       c("Race","recidivism"),
-                       c("Race","violence"),
-                       c("age","prison"),
-                       c("age","recidivism"),
-                       c("age","violence"),
-                       c("recidivism","violence"))
-  data.frame( implication=unlist(lapply(implications,tos)),
-              pvalue=unlist( lapply( implications, tst ) ) )
+
+myDAG <- dagitty('
+dag {
+bb="0,0,1,1"
+"criminal history" [latent,pos="0.216,0.474"]
+"social antecedents of crime" [latent,pos="0.256,0.831"]
+"social stuff" [latent,pos="0.370,0.648"]
+Court.Type [pos="0.588,0.491"]
+Gender [pos="0.264,0.670"]
+Number.of.Charges [pos="0.481,0.415"]
+Plea.s. [pos="0.615,0.131"]
+Public.Defender. [pos="0.700,0.541"]
+Race [pos="0.346,0.755"]
+age [pos="0.137,0.614"]
+prison [outcome,pos="0.509,0.147"]
+recidivism [exposure,pos="0.145,0.217"]
+resources [latent,pos="0.526,0.636"]
+violence [exposure,pos="0.283,0.274"]
+"criminal history" -> Plea.s.
+"criminal history" -> recidivism
+"criminal history" -> violence
+"social antecedents of crime" -> Gender
+"social antecedents of crime" -> Race
+"social antecedents of crime" -> age
+"social stuff" -> Court.Type
+"social stuff" -> Number.of.Charges
+"social stuff" -> resources
+Court.Type -> prison
+Gender -> "criminal history"
+Gender -> "social stuff"
+Number.of.Charges -> Plea.s.
+Number.of.Charges -> prison
+Plea.s. -> prison
+Public.Defender. -> Plea.s.
+Public.Defender. -> prison
+Race -> "criminal history"
+Race -> "social stuff"
+age -> "criminal history"
+age -> recidivism
+age -> violence
+recidivism -> prison
+resources -> Public.Defender.
+violence -> prison
 }
-covariance.matrix <- cov(data)
+')
+
+testdata <- data %>%
+  dplyr::select(-Judge.Name) %>%
+  mutate(across(where(function(x) nlevels(x) == 2), as.integer)) %>%
+  mutate_if(is.factor, as.ordered)
+corr <- lavCor(testdata, output = "cov")
+testresults <- localTests(myDAG, sample.cov = corr, sample.nobs=nrow(testdata))
+plotLocalTestResults(testresults)
+
