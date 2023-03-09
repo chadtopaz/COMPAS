@@ -19,7 +19,7 @@ load("cleancompas.Rdata")
 
 # Drop irrelevant variables
 data <- data %>%
-  dplyr::select(-Date, -Case.Number, -Case.Type, -Language, -Complexion, -Height, -Weight, -Eye, -Hair, -DOB, -Birth.Location, -Date.Filed.of.First.Charge, -Current.Statutes.of.All.Charges, -Charge.Name.of.First.Charge, -filedate, -COMPAS) %>%
+  dplyr::select(-Date, -Case.Number, -Case.Type, -Language, -Complexion, -Height, -Weight, -Eye, -Hair, -DOB, -Birth.Location, -Date.Filed.of.First.Charge, -Current.Statutes.of.All.Charges, -Charge.Name.of.First.Charge, -filedate, -COMPAS, -Number.of.Charges) %>%
   mutate_if(is.integer, as.numeric)
 
 # Restrict to sentenced cases
@@ -57,45 +57,47 @@ modeldata <- data %>%
   mutate_if(is.logical, as.numeric) %>%
   mutate_if(function(x) nlevels(x) < 10, as.numeric)
 
-
 # Set up variable groups
 compasvars <- c("violence", "recidivism")
 demographics <- c("age", "Gender", "Race")
-offensevars <- c("Number.of.Charges", "Court.Type")
-compasinputs <- c(demographics, offensevars)
 allbutprison <- setdiff(names(data), "prison")
 chargevars <- data %>% dplyr::select(starts_with("charge")) %>% names
+offensevars <- c(chargevars, "Court.Type")
+compasinputs <- c(demographics, chargevars)
 
 # Set up whitelist
 whitelist <- vector(mode = "list", length = 0)
-whitelist[[1]] <- expand.grid("violence", "prison")
-whitelist[[2]] <- expand.grid("recidivism", "prison")
-whitelist[[3]] <- expand.grid(compasinputs, compasvars)
-whitelist[[4]] <- expand.grid(demographics, "Public.Defender.")
-whitelist[[5]] <- expand.grid(demographics, "Court.Type")
-whitelist[[6]] <- expand.grid(demographics, chargevars)
+whitelist[[1]] <- expand.grid(compasinputs, compasvars)
+# whitelist[[2]] <- expand.grid(chargevars, "Court.Type")
+# whitelist[[1]] <- expand.grid("violence", "prison")
+# whitelist[[2]] <- expand.grid("recidivism", "prison")
+# whitelist[[4]] <- expand.grid(demographics, "Public.Defender.")
+# whitelist[[5]] <- expand.grid(demographics, chargevars)
 whitelist <- bind_rows(whitelist)
 
 # Set up blacklist
 blacklist <- vector(mode = "list", length = 0)
-blacklist[[1]] <- expand.grid(compasvars, compasvars)
-blacklist[[2]] <- expand.grid(demographics, demographics)
-blacklist[[3]] <- expand.grid("Public.Defender.", c(demographics, compasvars))
-blacklist[[4]] <- expand.grid(offensevars, offensevars)
-blacklist[[5]] <- expand.grid(offensevars, compasvars)
-blacklist[[6]] <- expand.grid(compasvars, offensevars)
-blacklist[[7]] <- expand.grid(compasvars, "Public.Defender.")
-blacklist[[8]] <- expand.grid("Plea.s.", compasvars)
-blacklist[[9]] <- expand.grid("Public.Defender.", "Court.Type")
-blacklist[[10]] <- expand.grid("Public.Defender.", demographics)
-blacklist[[11]] <- expand.grid("Court.Type", demographics)
-blacklist[[12]] <- expand.grid("prison", allbutprison)
-blacklist[[13]] <- expand.grid(chargevars, chargevars)
+blacklist[[1]] <- expand.grid("Court.Type", chargevars)
+blacklist[[2]] <- expand.grid(chargevars, chargevars)
+blacklist[[3]] <- expand.grid("Public.Defender.", demographics)
+blacklist[[4]] <- expand.grid("prison", allbutprison)
+blacklist[[5]] <- expand.grid("Public.Defender.", compasvars)
+blacklist[[6]] <- expand.grid(offensevars, demographics)
+# blacklist[[1]] <- expand.grid(compasvars, compasvars)
+# blacklist[[2]] <- expand.grid(demographics, demographics)
+# blacklist[[5]] <- expand.grid(offensevars, compasvars)
+# blacklist[[6]] <- expand.grid(compasvars, offensevars)
+# blacklist[[7]] <- expand.grid(compasvars, "Public.Defender.")
+# blacklist[[8]] <- expand.grid("Plea.s.", compasvars)
+# blacklist[[9]] <- expand.grid("Public.Defender.", "Court.Type")
+# blacklist[[10]] <- expand.grid("Public.Defender.", demographics)
+# blacklist[[11]] <- expand.grid("Public.Defender.", chargevars)
+# blacklist[[12]] <- expand.grid("Court.Type", demographics)
 blacklist <- bind_rows(blacklist)
 
 # Learn DAG
 # Possible commands: hc, mmhc, tabu, pc.stable
-dag <- fast.iamb(modeldata, blacklist = blacklist, whitelist = whitelist, cluster = cl)
+dag <- tabu(modeldata, whitelist = whitelist, blacklist = blacklist)
 plot(dag)
 arcs(dag)
 
@@ -110,14 +112,28 @@ outcomes(DAG) <- "prison"
 # Test implications
 testdata <- modeldata %>%
   mutate_if(is.factor, as.numeric)
-testresults <- localTests(DAG, data = testdata, max.conditioning.variables = 3)
+testresults <- localTests(DAG, data = testdata)
 plotLocalTestResults(testresults)
 
 # Look at adjustment sets
-adjustmentSets(DAG, exposure = c("violence", "recidivism"), outcome = "prison", effect = "total", type = "canonical")
+adjsets <- adjustmentSets(DAG, exposure = c("violence", "recidivism"), outcome = "prison", effect = "total", type = "canonical")
 
-# Run model
-M <- glm(prison ~ Judge.Name + Court.Type + Gender + Number.of.Charges + Public.Defender. + age + Race*violence + Race*recidivism, data = data, family = "binomial")
+# Create model
+adjindex <- 1
+covars <- adjsets[adjindex] %>%
+  unlist %>%
+  unname %>%
+  setdiff("violence") %>%
+  # setdiff("Court.Type") %>%
+  paste(collapse = "+")
+# interactions <- "+ Race*violence + Race*recidivism"
+interactions <- "+ Race*recidivism"
+model <- paste0("prison ~ ",covars,interactions) %>% as.formula
+
+# Run model on one judge
+judgedata <- data
+  # filter(Judge.Name == "Kollra, Ernest A")
+M <- glm(model, data = judgedata, family = "binomial")
 
 # Look at results
 tidy(M) %>% 
