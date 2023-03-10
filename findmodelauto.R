@@ -51,6 +51,14 @@ data <- data %>%
   na.omit %>%
   droplevels
 
+# Create single compas variable
+data <- data %>%
+  mutate(compas = case_when(
+    violence == "none" | recidivism == "none" ~ "none",
+    TRUE ~ paste0("v", violence, "r", recidivism))) %>%
+  mutate(compas = as.factor(compas)) %>%
+  dplyr::select(-violence, -recidivism)
+
 # Convert logical variables to numerical
 # Convert factors (except for judge) to numerical
 modeldata <- data %>%
@@ -58,7 +66,7 @@ modeldata <- data %>%
   mutate_if(function(x) nlevels(x) < 10, as.numeric)
 
 # Set up variable groups
-compasvars <- c("violence", "recidivism")
+compasvars <- c("compas")
 demographics <- c("age", "Gender", "Race")
 allbutprison <- setdiff(names(data), "prison")
 chargevars <- data %>% dplyr::select(starts_with("charge")) %>% names
@@ -117,23 +125,18 @@ plotLocalTestResults(testresults)
 
 # Look at adjustment sets
 adjsets <- adjustmentSets(DAG, exposure = c("violence", "recidivism"), outcome = "prison", effect = "total", type = "canonical")
-
 # Create model
 adjindex <- 1
 covars <- adjsets[adjindex] %>%
   unlist %>%
   unname %>%
-  setdiff("violence") %>%
-  # setdiff("Court.Type") %>%
+  setdiff("recidivism")
   paste(collapse = "+")
-# interactions <- "+ Race*violence + Race*recidivism"
-interactions <- "+ Race*recidivism"
+interactions <- "+ Race*violence"
 model <- paste0("prison ~ ",covars,interactions) %>% as.formula
 
-# Run model on one judge
-judgedata <- data
-  # filter(Judge.Name == "Kollra, Ernest A")
-M <- glm(model, data = judgedata, family = "binomial")
+# Run model
+M <- speedglm(model, data = data, family = binomial())
 
 # Look at results
 tidy(M) %>% 

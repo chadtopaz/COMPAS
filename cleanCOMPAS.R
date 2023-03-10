@@ -44,7 +44,8 @@ getScores <- function(i) {
   compasdata <- compas %>%
     filter(person_id == personID) %>%
     mutate(timediff = abs(as.numeric(screening_date - filedate))) %>%
-    filter(timediff == min(timediff)) %>%
+    filter(timediff <= 0) %>%
+    filter(timediff == max(timediff)) %>%
     dplyr::select(-id, -scale_set, -compas_assessment_id) %>%
     unique()
   if(nrow(compasdata) != 3){
