@@ -63,7 +63,7 @@ data <- data %>%
 # Convert factors (except for judge) to numerical
 modeldata <- data %>%
   mutate_if(is.logical, as.numeric) %>%
-  mutate_if(function(x) nlevels(x) < 10, as.numeric)
+  mutate_if(function(x) nlevels(x) < 50, as.numeric)
 
 # Set up variable groups
 compasvars <- c("compas")
@@ -124,15 +124,14 @@ testresults <- localTests(DAG, data = testdata)
 plotLocalTestResults(testresults)
 
 # Look at adjustment sets
-adjsets <- adjustmentSets(DAG, exposure = c("violence", "recidivism"), outcome = "prison", effect = "total", type = "canonical")
+adjsets <- adjustmentSets(DAG, exposure = "compas", outcome = "prison", effect = "total", type = "canonical")
 # Create model
 adjindex <- 1
 covars <- adjsets[adjindex] %>%
   unlist %>%
   unname %>%
-  setdiff("recidivism")
   paste(collapse = "+")
-interactions <- "+ Race*violence"
+interactions <- "+ Race*compas"
 model <- paste0("prison ~ ",covars,interactions) %>% as.formula
 
 # Run model
