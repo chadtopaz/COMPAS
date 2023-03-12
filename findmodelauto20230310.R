@@ -128,7 +128,7 @@ glance(M)
 nagelkerke(M)$Pseudo.R.squared.for.model.vs.null
 prediction <- predict(M, data, type = "response")
 rocinfo <- roc(data$prison ~ prediction, plot = TRUE, print.auc = TRUE, print.thres = TRUE)
-thresh <- 0.5
+thresh <- 0.576
 prediction <- prediction > thresh
 confusionMatrix(factor(prediction), factor(data$prison), positive = "TRUE")
 
@@ -181,17 +181,14 @@ p1 <- final %>%
 ggsave(p1, filename = "~/Desktop/compas.pdf", width = 6.5, units = "in")
 
 # Calculate how many additional people incarcerated due to COMPAS
-withcompas <- data %>%
-  filter(compas != "none") %>%
-  group_by(Race, prison) %>%
-  summarise(count = n())
 
 preddata <- data %>%
   filter(compas != "none") %>%
+  mutate(origcompas = compas) %>%
   mutate(compas = "none")
 preddata$pred <- predict(M, newdata = preddata, type = "response")
 preddata <- preddata %>%
-  mutate(predprison = pred > 0.5)
+  mutate(predprison = pred > thresh)
 
 preddata %>%
   filter(Race == "White") %>%
