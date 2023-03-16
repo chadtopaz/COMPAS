@@ -47,6 +47,27 @@ data <- data %>%
   na.omit %>%
   droplevels
 
+# Before anything else, assess unconditioned differences
+
+# Look at proportions
+data %>%
+  mutate(compas = violence != "none") %>%
+  group_by(compas, Race, prison) %>%
+  summarise(count = n()) %>%
+  ungroup(prison) %>%
+  mutate(total = sum(count)) %>%
+  mutate(p_prison = count/total) %>%
+  select(-count, -total) %>%
+  filter(prison == TRUE) %>%
+  select(-prison) %>%
+  pivot_wider(names_from = c(Race), values_from = p_prison)
+
+# Simple model for significance
+M0 <- data %>%
+  mutate(compas = violence != "none") %>%
+  glm(prison ~ Race*compas, data = ., family = "binomial")
+M0 %>% tidy %>% View
+
 # Create single compas variable
 # Drop any level with count of 1
 data <- data %>%
@@ -119,7 +140,6 @@ covars <- adjsets[adjindex] %>%
   paste(collapse = "+")
 treatment <- "+ compas"
 model <- paste0("prison ~ ", covars, treatment) %>% as.formula
-modelint <- paste0("prison ~ ", covars, treatment, "+ Race:compas") %>% as.formula
 
 # Run model
 M <- glm(model, data = data, family = binomial())
@@ -129,7 +149,7 @@ glance(M)
 nagelkerke(M)$Pseudo.R.squared.for.model.vs.null
 prediction <- predict(M, data, type = "response")
 rocinfo <- roc(data$prison ~ prediction, plot = TRUE, print.auc = TRUE, print.thres = TRUE)
-thresh <- 0.576
+thresh <- 0.5 # 0.576
 prediction <- prediction > thresh
 confusionMatrix(factor(prediction), factor(data$prison), positive = "TRUE")
 
@@ -183,30 +203,44 @@ ggsave(p1, filename = "~/Desktop/compas.pdf", width = 6.5, units = "in")
 
 # Calculate how many additional people incarcerated due to COMPAS
 
-preddata <- data %>%
-  filter(compas != "none") %>%
-  mutate(origcompas = compas) %>%
-  mutate(compas = "none")
-preddata$pred <- predict(M, newdata = preddata, type = "response")
-preddata <- preddata %>%
-  mutate(predprison = pred > thresh)
-
-preddata %>%
-  filter(Race == "White") %>%
-  dplyr::select(prison, predprison) %>%
-  mutate(prison = ifelse(prison == TRUE, "detained", "notdetained")) %>%
-  mutate(predprison = ifelse(predprison == TRUE, "detained", "notdetained")) %>%
-  rename(actual = prison, ifnocompass = predprison) %>%
-  table %>%
-  prop.table %>%
-  round(2)
-
-preddata %>%
-  filter(Race == "Black") %>%
-  dplyr::select(prison, predprison) %>%
-  mutate(prison = ifelse(prison == TRUE, "detained", "notdetained")) %>%
-  mutate(predprison = ifelse(predprison == TRUE, "detained", "notdetained")) %>%
-  rename(actual = prison, ifnocompass = predprison) %>%
-  table %>%
-  prop.table %>%
-  round(2)
+# preddata <- data %>%
+#   filter(compas != "none") %>%
+#   mutate(origcompas = compas) %>%
+#   mutate(compas = "none")
+# preddata$pred <- predict(M, newdata = preddata, type = "response")
+# preddata <- preddata %>%
+#   mutate(predprison = pred > thresh)
+# 
+# preddata %>%
+#   dplyr::select(predprison, Race) %>%
+#   mutate(predprison = ifelse(predprison == TRUE, "Detained", "Not Detained")) %>%
+#   rename("Without COMPAS (theoretical)" = predprison) %>%
+#   table %>%
+#   prop.table(2)
+# 
+# preddata %>%
+#   dplyr::select(prison, Race) %>%
+#   mutate(prison = ifelse(prison == TRUE, "Detained", "Not Detained")) %>%
+#   rename("With COMPAS (actual)" = prison) %>%
+#   table %>%
+#   prop.table(2)
+# 
+# preddata %>%
+#   filter(Race == "White") %>%
+#   dplyr::select(prison, predprison) %>%
+#   mutate(prison = ifelse(prison == TRUE, "detained", "notdetained")) %>%
+#   mutate(predprison = ifelse(predprison == TRUE, "detained", "notdetained")) %>%
+#   rename(actual = prison, ifnocompass = predprison) %>%
+#   table %>%
+#   prop.table %>%
+#   round(2)
+# 
+# preddata %>%
+#   filter(Race == "Black") %>%
+#   dplyr::select(prison, predprison) %>%
+#   mutate(prison = ifelse(prison == TRUE, "detained", "notdetained")) %>%
+#   mutate(predprison = ifelse(predprison == TRUE, "detained", "notdetained")) %>%
+#   rename(actual = prison, ifnocompass = predprison) %>%
+#   table %>%
+#   prop.table %>%
+#   round(2)
