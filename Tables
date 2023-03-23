@@ -1,6 +1,5 @@
-#Load Stargazer and sjPlot
+#Load Stargazer
 library(stargazer)
-library(xtable)
 
 #Create Table 1 
 print(xtable(table1, type = "latex"), file = "tab1.tex")
