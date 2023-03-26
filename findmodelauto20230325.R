@@ -5,10 +5,7 @@ library(broom)
 library(texreg)
 library(bnlearn)
 library(dagitty)
-library(SEMgraph)
-library(rcompanion)
-library(caret)
-library(pROC)
+library(grid)
 library(pbmcapply)
 
 hex <- hue_pal()(6)
@@ -61,6 +58,10 @@ data <- data %>%
   na.omit %>%
   droplevels
 
+# Lose one case that is High/Low
+data <- data %>%
+  filter(!(violence == "high" & recidivism == "low")) 
+
 #######################################
 ### Study unconditioned differences ###
 #######################################
@@ -103,6 +104,7 @@ M0 %>%
   texreg(single.row = TRUE,
          digits = 3,
          booktabs = TRUE,
+         siunitx = TRUE,
          custom.model.names = "Estimate (Std. Error)",
          custom.coef.names = c("Intercept", "Black", "COMPAS", "Black x COMPAS"),
          caption.above = TRUE,
@@ -178,6 +180,14 @@ daghc <- hc(modeldata, whitelist = whitelist, blacklist = blacklist)
 dagtabu <- tabu(modeldata, tabu = 25, whitelist = whitelist, blacklist = blacklist)
 identical(arcs(daghc), arcs(dagtabu))
 
+# Convert learned network to dagitty
+DAG <- dagtabu %>%
+  as.igraph %>%
+  graph2dagitty %>%
+  dagitty
+exposures(DAG) <- compasvars
+outcomes(DAG) <- "prison"
+
 # Look at adjustment sets
 adjsets <- adjustmentSets(DAG, exposure = compasvars, outcome = "prison", effect = "total", type = "canonical")
 length(unlist(adjsets))
@@ -202,8 +212,6 @@ A <- dagtabu %>%
   rownames_to_column("From") %>%
   relocate(From) %>%
   pivot_longer(cols = -one_of("From"), names_to = "To")
-
-
 
 A <- A %>%
   anti_join(whitelist2, by = c("From", "To")) %>%
@@ -259,14 +267,6 @@ plot_crop("dagmatrix.pdf")
 ### Test for independence ###
 #############################
 
-# Convert learned network to dagitty
-DAG <- dagtabu %>%
-  as.igraph %>%
-  graph2dagitty %>%
-  dagitty
-exposures(DAG) <- compasvars
-outcomes(DAG) <- "prison"
-
 # Convert to numeric
 testdata <- data %>%
   mutate_if(is.factor, as.numeric)
@@ -297,7 +297,6 @@ independence <- testresults %>%
 ggsave(plot = independence, "independence.pdf", width = 6.5, height = 2.5, units = "in")
 plot_crop("independence.pdf")
 
-
 ###########################################################
 ### Introduce latent variable to eliminate dependencies ###
 ###########################################################
@@ -306,22 +305,21 @@ latentstuff <- "socialfactors[latent]
   socialfactors -> age
   socialfactors -> Race
   socialfactors -> Gender
+  socialfactors -> charge0
+  socialfactors -> chargeCO3
+  socialfactors -> chargeF1
+  socialfactors -> chargeF2
+  socialfactors -> chargeF3
+  socialfactors -> chargeF5
+  socialfactors -> chargeF6
+  socialfactors -> chargeF7
+  socialfactors -> chargeM1
+  socialfactors -> chargeM2
+  socialfactors -> chargeMO3
+  socialfactors -> chargeNI0
+  socialfactors -> chargeTC4
+  socialfactors -> chargeTCX
 }"
-# socialfactors -> charge0
-# socialfactors -> chargeCO3
-# socialfactors -> chargeF1
-# socialfactors -> chargeF2
-# socialfactors -> chargeF3
-# socialfactors -> chargeF5
-# socialfactors -> chargeF6
-# socialfactors -> chargeF7
-# socialfactors -> chargeM1
-# socialfactors -> chargeM2
-# socialfactors -> chargeMO3
-# socialfactors -> chargeNI0
-# socialfactors -> chargeTC4
-# socialfactors -> chargeTCX
-# socialfactors -> Plea.s.
 
 DAGlatent <- DAG %>%
   as.character %>%
@@ -330,73 +328,114 @@ DAGlatent <- DAG %>%
   dagitty
 
 # Test implications again
-testresultslatent <- localTests(DAGlatent, data = testdata, R = 1000, max.conditioning.variables = 4)
-
-# Plot
-tmp1 <- testresultslatent %>%
-  filter(`2.5%` <= 0) %>%
-  arrange(`2.5%`)
-tmp2 <- testresultslatent %>%
-  anti_join(tmp1) %>%
-  arrange(`97.5%`)
-testresultslatent <- rbind(tmp1, tmp2) %>%
+testresultslatent <- localTests(DAGlatent, data = testdata, max.conditioning.variables = 4, R = 1000) %>%
+  arrange(estimate) %>%
   mutate(order = factor(row_number())) %>%
   mutate(danger = case_when(
     `97.5%` < -0.1 | `2.5%` > 0.1 ~ TRUE,
     TRUE ~ FALSE))
+
+# Plot
 testresultslatent %>%
   ggplot(aes(x = order, color = danger)) +
-  geom_point(aes(y = estimate)) +
+  geom_point(aes(y = estimate), size = 0.3) +
   geom_linerange(aes(ymin = `2.5%`, ymax = `97.5%`)) +
-  scale_color_manual(breaks = c(TRUE, FALSE), values = c(hex[1], "grey40")) +
+  scale_color_manual(breaks = c(TRUE, FALSE), values = c(hex[6], "grey40")) +
   scale_x_discrete(expand = expansion(mult = 0.02)) +
-  ylim(-0.25, 0.25) +
-  geom_hline(yintercept = c(-0.1, 0.1), lty = "longdash", color = hex[1]) +
+  scale_y_continuous(breaks = seq(from = -0.2, to = 0.2, by = 0.1), limits = c(-0.26, 0.26), name = "Test Statistic") +
+  geom_hline(yintercept = c(-0.1, 0.1), lty = "longdash", color = hex[6]) +
   theme(legend.position = "none",
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
         axis.title.x = element_blank(),
         axis.ticks.x = element_blank(),
         axis.text.x = element_blank())
-
-
-
-
 
 # Look at adjustment sets
 adjsetslatent <- adjustmentSets(DAGlatent, exposure = compasvars, outcome = "prison", effect = "total", type = "canonical")
 length(unlist(adjsetslatent))
 identical(adjsets, adjsetslatent)
 
+#######################
+### Run Main Models ###
+#######################
 
+# Minimal
+adjsetsminimal <- adjustmentSets(DAG, exposure = compasvars, outcome = "prison", effect = "total", type = "minimal")
+adjsetscanonical <- adjustmentSets(DAG, exposure = compasvars, outcome = "prison", effect = "total", type = "canonical")
 
-
-# Create model
-adjindex <- 1
-covars <- adjsets[adjindex] %>%
+# Create models
+modelminimal <- adjsetsminimal %>%
   unlist %>%
   unname %>%
-  paste(collapse = "+")
-treatment <- "+ compas"
-model <- paste0("prison ~ ", covars, treatment) %>% as.formula
+  paste(collapse = "+") %>%
+  paste0("prison ~ ", ., "+ compas") %>%
+  as.formula
+modelcanonical <- adjsetscanonical %>%
+  unlist %>%
+  unname %>%
+  paste(collapse = "+") %>%
+  paste0("prison ~ ", ., "+ compas") %>%
+  as.formula
+modelcanonicalint <- adjsetscanonical %>%
+  unlist %>%
+  unname %>%
+  paste(collapse = "+") %>%
+  paste0("prison ~ ", ., "+ Race*compas") %>%
+  as.formula
 
-# Run model
-M <- glm(model, data = data, family = binomial())
+# Run models
+Mminimal <- glm(modelminimal, data = data, family = binomial())
+Mcanonical <- glm(modelcanonical, data = data, family = binomial())
+Mcanonicalint <- glm(modelcanonicalint, data = data, family = binomial())
 
-# Model performance
-glance(M)
-nagelkerke(M)$Pseudo.R.squared.for.model.vs.null
-prediction <- predict(M, data, type = "response")
-rocinfo <- roc(data$prison ~ prediction, plot = TRUE, print.auc = TRUE, print.thres = TRUE)
-thresh <- 0.5 # 0.576
-prediction <- prediction > thresh
-confusionMatrix(factor(prediction), factor(data$prison), positive = "TRUE")
+# Compile results
+texreg(l = list(Mminimal, Mcanonical, Mcanonicalint),
+          single.row = TRUE,
+          digits = 2,
+          booktabs = TRUE,
+          siunitx = TRUE,
+          caption.above = TRUE,
+          custom.model.names = c("(1) Minimal Adjustment", "(2) Canonical Adjustment", "(3) Canonical Adjustment + Interaction"),
+          custom.coef.map = list(
+            "compasvlowrlow" = "Low/Low",
+            "compasvlowrmedium" = "Low/Medium",
+            "compasvlowrhigh" = "Low/High",
+            "compasvmediumrlow" = "Medium/Low",
+            "compasvmediumrmedium" = "Medium/Medium",
+            "compasvmediumrhigh" = "Medium/High",
+            "compasvhighrlow" = "High/Low",
+            "compasvhighrmedium" = "High/Medium",
+            "compasvhighrhigh" = "High/High",
+            "chargeCO3" = "Comm. Ordinace",
+            "chargeF1" = "Felony 1",
+            "chargeF2" = "Felony 2",
+            "chargeM1" = "Misdemeanor 1",
+            "GenderMale" = "Male",
+            "RaceBlack" = "Black",
+            "age" = "Age",
+            "Court.TypeFelony" = "Felony Court",
+            "Public.Defender.TRUE" = "Public Defender",
+            "Plea.s.nolo" = "Plea Nolo",
+            "Plea.s.notguilty" = "Plea Not Guilty"),
+          groups = list("COMPAS Score" = 1:8, "Charges" = 9:12, "Demographics" = 13:15, "Courtroom Variables" = 16:19),
+          custom.gof.rows = list("\\quad Judge Fixed Effects" = c("No", "Yes", "Yes"),
+                                 "\\quad Interaction of Race and COMPAS" = c("No", "No", "Yes")),
+          caption = "Model summaries for logistic regressions using the minimal and canonical
+          adjustment sets arising from the causal model specified in Figure~\\ref{fig:dag}. The outcome variable is
+          whether a defendant found guilty was given prison as part of their sentence. The top section of the table provides
+          coefficients and (in parentheses) standard errors. The bottom section provides goodness-of-fit measures.
+          The Aikake Information Criterion (AIC) and Bayes Information Criterion (BIC) suggest that the model with canonical
+          adjustment set and no interaction terms is preferred.
+          For brevity, we only present charge variables that are statistically significant, and we do not present
+          the individual judge effect coefficients when the canonical adjustment set is used. See Figure~\\ref{fig:compasresult} for
+          interpretation of COMPAS score coefficients.",
+          label = "tab:mainmodel")
 
-# Look at results
-results <- M %>% tidy() %>% 
+# Compile results
+results <- Mcanonical %>% tidy() %>% 
   filter(str_detect(term, "compas")) %>%
   mutate(term = str_replace_all(term, "compas", ""))
-results %>% View
 
 # Get cell proportions and incorporate effects
 final <- data %>%
@@ -424,21 +463,46 @@ final <- final %>%
   mutate(recidivism = paste("recidivism", recidivism)) %>%
   mutate(violence = factor(violence, levels = c("violence low", "violence medium", "violence high"))) %>%
   mutate(recidivism = factor(recidivism, levels = c("recidivism low", "recidivism medium", "recidivism high"))) %>%
-  mutate(Race = case_match(Race, "White" ~ "white", "Black" ~ "Black")) %>%
-  mutate(Race = as.factor(Race)) %>%
   mutate(oddsratio = exp(estimate)) %>%
   dplyr::select(-estimate)
+  # complete(violence, recidivism, Race, fill = list(prop = 0, p.value = 1, oddsratio = NA)) 
 
 # Make plot
+oddsratiolabels <- final %>%
+  mutate(oddsratio =paste("OR = ", round(oddsratio, 2))) %>%
+  mutate(oddsratio = replace(oddsratio, p.value >= 0.05, "")) %>%
+  pull(oddsratio)
 compasresult <- final %>%
-  filter(p.value <= 0.05) %>%
   ggplot(aes(x = Race, y = prop, fill = Race)) +
-  ylab("Proportion of racial group with these COMPAS scores") +
   geom_col() +
+  geom_text(aes(label=round(prop,3)), position=position_dodge(width=0.9), vjust=-0.25) +
+  scale_y_continuous(name = "Proportion of racial group\nhaving these COMPAS scores", limits = c(0,1), breaks = c(0, 0.5, 1)) +
+  scale_fill_manual(values = hex[c(2,4)]) +
   facet_grid(rows = vars(violence), cols = vars(recidivism)) +
-  theme(aspect.ratio = 1, legend.position = "none") +
-  geom_text(aes(x = 1.5, y = 0.6, label = paste("odds ratio = ", round(oddsratio, 1))))
-ggsave(plot = compasresult, filename = "compasresult.pdf", width = 6.5, units = "in")
+  theme(legend.position = "none",
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  geom_text(aes(x = 1.5, y = 0.85, label = oddsratiolabels))
+
+# Remove unused facet
+grob <- ggplotGrob(compasresult);
+idx <- which(grob$layout$name == "panel-3-1");
+grob$grobs[[idx]] <- nullGrob();
+idx <- which(grob$layout$name %in% c("axis-b-1"));
+grob$layout[idx, c("t", "b")] <- grob$layout[idx, c("t", "b")] - 2
+idx <- which(grob$layout$name %in% c("axis-l-3"));
+grob$layout[idx, c("l", "r")] <- grob$layout[idx, c("l", "r")] + 2
+# grid.newpage()
+# grid.draw(grob)
+
+# Save plot
+ggsave(plot = grob, filename = "compasresult.pdf", width = 6.5, height = 6.5/1.618, units = "in")
+
+
+#######################
+### Run Main Models ###
+#######################
+
 
 # Drop unassigned judge
 judgedata <- data %>%

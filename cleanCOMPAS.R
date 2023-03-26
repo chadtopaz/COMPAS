@@ -78,7 +78,7 @@ data <- data %>%
 
 data <- data %>%
   mutate(Court.Type = replace(Court.Type, Court.Type == "", NA)) %>%
-  mutate(Court.Type = factor(Court.Type))
+  mutate(Court.Type = factor(Court.Type, levels = c("Traffic and Misdemeanor", "Felony")))
 
 data <- data %>%
   mutate(Case.Type = replace(Case.Type, Case.Type == "", NA)) %>%
