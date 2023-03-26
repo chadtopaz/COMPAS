@@ -1,0 +1,23 @@
+#Load Stargazer
+library(stargazer)
+
+#Create Table 1 
+print(xtable(table1, type = "latex"), file = "tab1.tex")
+
+#Create Table 2
+stargazer(M0, out = "tab2.tex", intercept.bottom = F, intercept.top = T, digits = 3)
+
+#Create Table 3
+M1 <- glm(prison ~ compas + Race, data = data, family = binomial())
+
+charges_COMP <- chargevars %>%
+  paste(collapse = "+")
+model_2 <- paste0("prison ~ Court.Type + Race + Plea.s. + Public.Defender. + ", chargevars, treatment) %>% as.formula
+M2 <- glm(model_2, data = data, family = binomial())
+
+model_3 <- paste0("prison ~ Court.Type + Race + Plea.s. + Public.Defender. + Gender + age + Judge.Name + ", chargevars, treatment) %>% as.formula
+M3 <- glm(model_3, data = data, family = binomial())
+
+omit_list <- c("Court.Type", "Plea.s.", "Judge.Name", "charge", "Public.Defender.", "compasvhighrmedium", "compasvlowrhigh", "compasvlowrmedium", "compasvmediumrhigh", "compasvmediumrlow")
+order_list <- c("compasvhighrhigh", "compasvmediumrmedium", "compasvlowrlow", "RaceBlack", "GenderMale", "age")
+stargazer(M1, M2, M3, M, out = "tab3.tex", intercept.bottom = F, intercept.tip = T, digits = 3, omit = omit_list, order = order_list)
