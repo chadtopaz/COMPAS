@@ -1,66 +1,22 @@
 # Load libraries
 library(tidyverse)
+library(cobalt)
 library(scales)
 library(broom)
 library(texreg)
 library(bnlearn)
 library(dagitty)
+library(SEMgraph)
+library(knitr)
 library(grid)
 library(pbmcapply)
 
 hex <- hue_pal()(6)
 
-######################
-### Data Filtering ###
-######################
-
 # Read data
 load("cleancompas.Rdata")
-
-# Drop irrelevant variables
 data <- data %>%
-  dplyr::select(-Date, -Case.Number, -Case.Type, -Language, -Complexion, -Height, -Weight, -Eye, -Hair, -DOB, -Birth.Location, -Date.Filed.of.First.Charge, -Current.Statutes.of.All.Charges, -Charge.Name.of.First.Charge, -filedate, -COMPAS, -Number.of.Charges) %>%
-  mutate_if(is.integer, as.numeric)
-
-# Restrict to sentenced cases
-data <- data %>%
-  # filter(Court.Type == "Felony") %>%
-  filter(Sentence. == TRUE) %>%
-  dplyr::select(-Sentence.)
-
-# Restrict disposition and cases status
-data <- data %>%
-  filter(str_detect(Case.Status, "Disposed")) %>%
-  filter(str_detect(Disposition, "Adjudicat")) %>%
-  droplevels
-
-# Study only Black/white disparity
-data <- data %>%
-  filter(Race %in% c("Black","White")) %>%
-  droplevels %>%
-  mutate(Race = case_match(Race,
-    "White" ~ "white",
-    .default = Race)) %>%
-  mutate(Race = factor(Race, levels = c("white", "Black")))
-
-# Add flag for prison time
-data <- data %>%  
-  mutate(prison = case_when(
-    Confinement > 0 ~ TRUE,
-    TRUE ~ FALSE))
-
-# Drop some more variables
-data <- data %>%
-  dplyr::select(-Case.Status, -Sentence.Name, -Confinement, -Fine, -State.Probation, -Disposition, -failuretoappear)
-
-# Keep complete records only
-data <- data %>%
-  na.omit %>%
-  droplevels
-
-# Lose one case that is High/Low
-data <- data %>%
-  filter(!(violence == "high" & recidivism == "low")) 
+  filter(compas != "vhighrlow")
 
 #######################################
 ### Study unconditioned differences ###
@@ -68,19 +24,18 @@ data <- data %>%
 
 # Look at proportions
 toplineresults <- data %>%
-  mutate(compas = violence != "none") %>%
-  group_by(compas, Race, prison) %>%
+  group_by(compasflag, Race, prison) %>%
   summarise(count = n()) %>%
   ungroup(prison) %>%
   mutate(total = sum(count)) %>%
   mutate(p_prison = count/total) %>%
   filter(prison == TRUE) %>%
   select(-prison) %>%
-  mutate(compas = case_match(compas,
+  mutate(compasflag = case_match(compasflag,
                              FALSE ~ "Before COMPAS",
                              TRUE ~ "With COMPAS")) %>%
-  mutate(compas = factor(compas)) %>%
-  rename("Time Period" = compas, "Defendant Race" = Race, "Frequency of Imprisonment" = p_prison)
+  mutate(compasflag = factor(compasflag)) %>%
+  rename("Time Period" = compasflag, "Defendant Race" = Race, "Frequency of Imprisonment" = p_prison)
 
 topline <- toplineresults %>%
   mutate(`Frequency of Imprisonment` = round(`Frequency of Imprisonment`, 3)) %>%
@@ -89,15 +44,14 @@ topline <- toplineresults %>%
   ylim(0, 1) +
   scale_fill_manual(values = hex[c(2,4)]) +
   geom_text(aes(label=`Frequency of Imprisonment`), position=position_dodge(width=0.9), vjust=-0.25) +
-  geom_text(aes(y = 0, label=total), position=position_dodge(width=0.9), vjust=-0.25) +
+  geom_text(aes(y = 0, label=paste0("out of\n",total)), position=position_dodge(width=0.9), vjust=-0.35) +
   theme(legend.position = "top",
         axis.title.x = element_blank())
 ggsave("topline.pdf", plot = topline, width = 3.3, height = 3.3, units = "in")  
 
 # Simple model for significance
 M0 <- data %>%
-  mutate(compas = violence != "none") %>%
-  glm(prison ~ Race*compas, data = ., family = "binomial")
+  glm(prison ~ Race*compasflag, data = ., family = "binomial")
 
 # Format output
 M0 %>%
@@ -119,20 +73,14 @@ M0 %>%
          defendants.",
          label = "tab:topline")
 
+### DROP COMPAS FLAG
+data <- data %>%
+  dplyr::select(-compasflag)
+
 #################
 ### Learn DAG ###
 #################
 
-# Create single compas variable
-data <- data %>%
-  mutate(compas = case_when(
-    violence == "none" | recidivism == "none" ~ "none",
-    TRUE ~ paste0("v", violence, "r", recidivism))) %>%
-  mutate(compas = as.factor(compas)) %>%
-  dplyr::select(-violence, -recidivism) %>%
-  droplevels
-
-# Convert logical variables to numerical
 # Convert factors (except for judge) to numerical
 modeldata <- data %>%
   mutate_if(is.logical, as.numeric) %>%
@@ -142,36 +90,44 @@ modeldata <- data %>%
 compasvars <- c("compas")
 demographics <- c("age", "Gender", "Race")
 allbutprison <- setdiff(names(data), "prison")
+allbutprisonandplea <- setdiff(names(data), c("prison","Plea.s."))
 chargevars <- data %>% dplyr::select(starts_with("charge")) %>% names
-compasinputs <- c(demographics, chargevars)
+compasinputs <- c("age", "Gender")
 
 # Set up whitelist
 whitelist <- vector(mode = "list", length = 0)
 whitelist[[1]] <- expand.grid(compasinputs, compasvars)
-whitelist[[2]] <- expand.grid(compasvars, "prison")
+whitelist[[2]] <- NULL#expand.grid(compasvars, "prison")
 whitelist[[3]] <- expand.grid(chargevars, "Court.Type")
 whitelist[[4]] <- expand.grid(chargevars, "prison")
 whitelist[[5]] <- expand.grid("Plea.s.", "prison")
+whitelist[[6]] <- expand.grid("Judge.Name", "prison")
+whitelist[[7]] <- expand.grid("Public.Defender", "Plea.s.")
 whitelist <- bind_rows(whitelist)
 
 # Set up blacklist
 blacklist <- vector(mode = "list", length = 0)
 blacklist[[1]] <- expand.grid(demographics, demographics)
-blacklist[[2]] <- expand.grid(demographics, "Court.Type")
+blacklist[[2]] <- NULL#expand.grid(demographics, "Court.Type")
 blacklist[[3]] <- expand.grid(chargevars, demographics)
 blacklist[[4]] <- expand.grid(chargevars, chargevars)
-blacklist[[5]] <- expand.grid("Court.Type", demographics)
-blacklist[[6]] <- expand.grid("Court.Type", chargevars)
-blacklist[[7]] <- expand.grid("Court.Type", compasvars)
-blacklist[[8]] <- expand.grid("Public.Defender.", demographics)
-blacklist[[9]] <- expand.grid("Public.Defender.", compasvars)
-blacklist[[10]] <- expand.grid("Judge.Name", demographics)
-blacklist[[11]] <- expand.grid("Judge.Name", "Court.Type")
-blacklist[[12]] <- expand.grid("Judge.Name", "Public.Defender.")
-blacklist[[13]] <- expand.grid("Judge.Name", compasvars)
-blacklist[[14]] <- expand.grid("Plea.s.", allbutprison)
-blacklist[[15]] <- expand.grid(compasvars, allbutprison)
-blacklist[[16]] <- expand.grid("prison", allbutprison)
+blacklist[[5]] <- expand.grid(chargevars, compasvars)
+blacklist[[6]] <- expand.grid("Court.Type", demographics)
+blacklist[[7]] <- expand.grid("Court.Type", chargevars)
+blacklist[[8]] <- expand.grid("Court.Type", compasvars)
+blacklist[[9]] <- expand.grid("Public.Defender.", demographics)
+blacklist[[10]] <- expand.grid("Public.Defender.", compasvars)
+blacklist[[11]] <- expand.grid("Judge.Name", demographics)
+blacklist[[12]] <- expand.grid("Judge.Name", "Court.Type")
+blacklist[[13]] <- expand.grid("Judge.Name", "Public.Defender.")
+blacklist[[14]] <- expand.grid("Judge.Name", compasvars)
+blacklist[[15]] <- expand.grid("Plea.s.", allbutprison)
+blacklist[[16]] <- expand.grid(compasvars, allbutprisonandplea)
+blacklist[[17]] <- expand.grid("prison", allbutprison)
+blacklist[[18]] <- expand.grid("Court.Type", "Court.Type")
+blacklist[[19]] <- expand.grid("Public.Defender.", "Public.Defender.")
+blacklist[[20]] <- expand.grid("Judge.Name", "Judge.Name")
+blacklist[[21]] <- expand.grid("prison", "prison")
 blacklist <- bind_rows(blacklist)
 
 # Learn DAG
@@ -233,8 +189,8 @@ A <- A %>%
     str_replace_all(x, "charge", "Charge "))) 
 
 varorder <- c("Gender",
-              "Race",
               "Age",
+              "Race",
               A %>% filter(str_detect(From, "Charge")) %>% pull(From) %>% unique %>% sort,
               "Court Type",
               "Public Defender",
@@ -250,12 +206,11 @@ A <- A %>%
   mutate(value = replace(value, To == From, "self")) %>%
   mutate(value = factor(value, levels = c("-Inf","0","1","Inf","self")))
 
-
 dagmatrix <- A %>% ggplot(aes(x = To, y = From, fill = value)) +
   geom_tile(color = "white") +
   scale_x_discrete(position = "top", name = "Effect") +
   scale_y_discrete(name = "Cause") +
-  scale_fill_manual(breaks = c("-Inf", "0" , "1", "Inf", "self"), values = c(hex[1], "grey90", hex[5], hex[3], "black"), labels = c("Manually excluded", "Excluded by algorithm", "Included by Algorithm", "Manually included", "Not allowed (self-causality)"), name = NULL) +
+  scale_fill_manual(breaks = c("self", "-Inf", "0" , "1", "Inf"), values = c("black", hex[1], "grey90", hex[5], hex[3]), labels = c("Not allowed (self-causality)", "Manually excluded", "Excluded by algorithm", "Included by algorithm", "Manually included"), name = NULL) +
   theme(legend.position = "right",
         axis.text.x = element_text(angle = -90, hjust=1, vjust = 0.5, size = 7),
         axis.text.y = element_text(size = 7),
@@ -272,11 +227,11 @@ testdata <- data %>%
   mutate_if(is.factor, as.numeric)
 
 # Test implications
-testresults <- localTests(DAG, data = testdata, max.conditioning.variables = 4, R = 1000) %>%
+testresults <- localTests(DAG, data = testdata, R = 500) %>%
   arrange(estimate) %>%
   mutate(order = factor(row_number())) %>%
   mutate(danger = case_when(
-    `97.5%` < -0.1 | `2.5%` > 0.1 ~ TRUE,
+    `97.5%` < -0.10 | `2.5%` > 0.1 ~ TRUE,
     TRUE ~ FALSE))
 
 # Plot
@@ -302,23 +257,27 @@ plot_crop("independence.pdf")
 ###########################################################
 
 latentstuff <- "socialfactors[latent]
-  socialfactors -> age
-  socialfactors -> Race
-  socialfactors -> Gender
-  socialfactors -> charge0
-  socialfactors -> chargeCO3
-  socialfactors -> chargeF1
-  socialfactors -> chargeF2
-  socialfactors -> chargeF3
-  socialfactors -> chargeF5
-  socialfactors -> chargeF6
-  socialfactors -> chargeF7
-  socialfactors -> chargeM1
-  socialfactors -> chargeM2
-  socialfactors -> chargeMO3
-  socialfactors -> chargeNI0
-  socialfactors -> chargeTC4
-  socialfactors -> chargeTCX
+  crimhist[latent]
+  age -> socialfactors
+  Race -> socialfactors
+  Gender -> socialfactors
+  socialfactors -> crimhist
+  crimhist -> charge0
+  crimhist -> chargeCO3
+  crimhist -> chargeF1
+  crimhist -> chargeF2
+  crimhist -> chargeF3
+  crimhist -> chargeF5
+  crimhist -> chargeF6
+  crimhist -> chargeF7
+  crimhist -> chargeM1
+  crimhist -> chargeM2
+  crimhist -> chargeMO3
+  crimhist -> chargeNI0
+  crimhist -> chargeTC4
+  crimhist -> chargeTCX
+  crimhist -> Plea.s.
+  crimhist -> prison
 }"
 
 DAGlatent <- DAG %>%
@@ -328,7 +287,7 @@ DAGlatent <- DAG %>%
   dagitty
 
 # Test implications again
-testresultslatent <- localTests(DAGlatent, data = testdata, max.conditioning.variables = 4, R = 1000) %>%
+testresultslatent <- localTests(DAGlatent, data = testdata) %>%
   arrange(estimate) %>%
   mutate(order = factor(row_number())) %>%
   mutate(danger = case_when(
@@ -365,7 +324,7 @@ adjsetsminimal <- adjustmentSets(DAG, exposure = compasvars, outcome = "prison",
 adjsetscanonical <- adjustmentSets(DAG, exposure = compasvars, outcome = "prison", effect = "total", type = "canonical")
 
 # Create models
-modelminimal <- adjsetsminimal %>%
+modelminimal <- adjsetsminimal[[2]] %>%
   unlist %>%
   unname %>%
   paste(collapse = "+") %>%
@@ -418,7 +377,7 @@ texreg(l = list(Mminimal, Mcanonical, Mcanonicalint),
             "Public.Defender.TRUE" = "Public Defender",
             "Plea.s.nolo" = "Plea Nolo",
             "Plea.s.notguilty" = "Plea Not Guilty"),
-          groups = list("COMPAS Score" = 1:8, "Charges" = 9:12, "Demographics" = 13:15, "Courtroom Variables" = 16:19),
+          groups = list("COMPAS Score" = 1:8, "Charges" = 9:12, "Demographics" = 13:15, "Courtroom Variables" = 16:18),
           custom.gof.rows = list("\\quad Judge Fixed Effects" = c("No", "Yes", "Yes"),
                                  "\\quad Interaction of Race and COMPAS" = c("No", "No", "Yes")),
           caption = "Model summaries for logistic regressions using the minimal and canonical
@@ -513,6 +472,7 @@ judgekeeps <- judgedata %>%
   group_by(Judge.Name) %>%
   summarise(compasno = sum(compas == "none"), compasyes = sum(compas != "none")) %>%
   filter(compasno >= 2 & compasyes >= 2) %>%
+  filter(Judge.Name != "Gilman, Allison") %>%
   pull(Judge.Name)
 judgedata <- judgedata %>%
   filter(Judge.Name %in% judgekeeps) %>%
@@ -526,8 +486,8 @@ judgedata %>%
   summarise(felony = sum(Court.Type == "Felony"), misdemeanor = sum(Court.Type == "Traffic and Misdemeanor")) %>%
   print(n = 50)
 judgedata <- judgedata %>%
-  filter(!(Judge.Name == "Porth, Ari Abraham" & Court.Type == "Traffic and Misdemeanor"))
-
+  filter(!(Judge.Name == "Porth, Ari Abraham" & Court.Type == "Traffic and Misdemeanor")) %>%
+  filter(!(Judge.Name == "Merrigan, Edward H, Jr" & Court.Type == "Traffic and Misdemeanor"))
 # Drop Court.Type
 judgedata <- judgedata %>%
   select(-Court.Type)
