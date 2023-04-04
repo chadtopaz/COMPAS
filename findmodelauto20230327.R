@@ -228,7 +228,7 @@ testdata <- data %>%
   mutate_if(is.factor, as.numeric)
 
 # Test implications
-testresults <- localTests(DAG, data = testdata, R = 500) %>%
+testresults <- localTests(DAG, data = testdata,) %>%
   arrange(estimate) %>%
   mutate(order = factor(row_number())) %>%
   mutate(danger = case_when(
@@ -257,28 +257,24 @@ plot_crop("independence.pdf")
 ### Introduce latent variable to eliminate dependencies ###
 ###########################################################
 
-latentstuff <- "socialfactors[latent]
-  crimhist[latent]
-  age -> socialfactors
-  Race -> socialfactors
-  Gender -> socialfactors
-  socialfactors -> crimhist
-  crimhist -> charge0
-  crimhist -> chargeCO3
-  crimhist -> chargeF1
-  crimhist -> chargeF2
-  crimhist -> chargeF3
-  crimhist -> chargeF5
-  crimhist -> chargeF6
-  crimhist -> chargeF7
-  crimhist -> chargeM1
-  crimhist -> chargeM2
-  crimhist -> chargeMO3
-  crimhist -> chargeNI0
-  crimhist -> chargeTC4
-  crimhist -> chargeTCX
-  crimhist -> Plea.s.
-  crimhist -> prison
+latentstuff <- "
+  chargedecisions[latent]
+  chargedecisions -> charge0
+  chargedecisions -> chargeCO3
+  chargedecisions -> chargeF1
+  chargedecisions -> chargeF2
+  chargedecisions -> chargeF3
+  chargedecisions -> chargeF5
+  chargedecisions -> chargeF6
+  chargedecisions -> chargeF7
+  chargedecisions -> chargeM1
+  chargedecisions -> chargeM2
+  chargedecisions -> chargeMO3
+  chargedecisions -> chargeNI0
+  chargedecisions -> chargeTC4
+  chargedecisions -> chargeTCX
+  chargedecisions -> Plea.s.
+  chargedecisions -> prison
 }"
 
 DAGlatent <- DAG %>%
